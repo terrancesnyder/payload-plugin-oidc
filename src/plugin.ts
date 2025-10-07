@@ -6,6 +6,7 @@ import { getCallbackPath } from './lib/helpers';
 import { extendViteConfig } from './lib/webpack';
 import type { oidcPluginOptions } from './types';
 import crypto from 'crypto';
+import { json } from 'stream/consumers';
 
 export const oidcPlugin =
   (opts: oidcPluginOptions) =>
@@ -21,7 +22,7 @@ export const oidcPlugin =
       'initPath:',
       opts.initPath,
       'callbackPath:',
-      callbackPath
+      callbackPath,
     );
 
     // --- Server-side setup (Next.js compatible) ---
@@ -39,83 +40,96 @@ export const oidcPlugin =
         console.log('[payload-plugin-oidc] /oidc/signin route hit');
 
         try {
-          // const redirectURL = `${opts.authorizationURL}?client_id=${encodeURIComponent(opts.clientID)}&redirect_uri=${encodeURIComponent(opts.callbackURL)}&response_type=code&scope=${encodeURIComponent(opts.scope)}`;
-          
+          const state = crypto.randomBytes(16).toString('hex'); // 32-char random hex (strong entropy)
+          const redirectURL = new URL(opts.authorizationURL);
+          redirectURL.searchParams.set('client_id', opts.clientID);
+          redirectURL.searchParams.set('redirect_uri', opts.callbackURL);
+          redirectURL.searchParams.set('response_type', 'code');
+          redirectURL.searchParams.set('scope', opts.scope);
+          redirectURL.searchParams.set('state', state);
 
-              const state = crypto.randomBytes(16).toString('hex'); // 32-char random hex (strong entropy)
-    const redirectURL = new URL(opts.authorizationURL);
-    redirectURL.searchParams.set('client_id', opts.clientID);
-    redirectURL.searchParams.set('redirect_uri', opts.callbackURL);
-    redirectURL.searchParams.set('response_type', 'code');
-    redirectURL.searchParams.set('scope', opts.scope);
-    redirectURL.searchParams.set('state', state);
+          console.log('[payload-plugin-oidc] Redirecting to:', redirectURL);
 
-    console.log('[payload-plugin-oidc] Redirecting to:', redirectURL);
-
-return new Response(null, {
-      status: 302,
-      headers: {
-        Location: redirectURL.toString(),
-        'Set-Cookie': `oidc_state=${state}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=300`, // 5 min lifetime
-      },
-    });
-
+          return new Response(null, {
+            status: 302,
+            headers: {
+              Location: redirectURL.toString(),
+              'Set-Cookie': `oidc_state=${state}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=300`, // 5 min lifetime
+            },
+          });
         } catch (err) {
           console.error('[payload-plugin-oidc] ❌ initHandler error:', err);
           return new Response('OIDC init error', { status: 500 });
         }
       };
 
+      interface HydraTokenResponse {
+        access_token: string;
+        expires_in: number;
+        id_token?: string; // optional depending on grant type
+        refresh_token?: string; // optional given refresh type
+        scope: string;
+        token_type: 'bearer' | 'Bearer';
+      }
+
       // --- OIDC Callback ---
       const callbackHandler: PayloadHandler = async (req: PayloadRequest) => {
-  console.log('[payload-plugin-oidc] /oidc/callback route hit');
-  try {
-    const rawUrl = req.url ?? '';
-    const url = new URL(rawUrl, 'http://localhost');
-    const code = url.searchParams.get('code');
-    console.log('[payload-plugin-oidc] received code:', code);
+        console.log('[payload-plugin-oidc] /oidc/callback route hit');
+        try {
+          const rawUrl = req.url ?? '';
+          const url = new URL(rawUrl, 'http://localhost');
+          const code = url.searchParams.get('code');
+          console.log('[payload-plugin-oidc] received code:', code);
 
-    if (!code) {
-      console.error('[payload-plugin-oidc] ❌ Missing code');
-      return new Response('Missing code', { status: 400 });
-    }
+          if (!code) {
+            console.error('[payload-plugin-oidc] ❌ Missing code');
+            return new Response('Missing code', { status: 400 });
+          }
 
-    console.log('[payload-plugin-oidc] Simulating token exchange...');
-    console.log('[payload-plugin-oidc] Simulating token exchange...');
+          console.log('[payload-plugin-oidc] Simulating token exchange...');
+          console.log('[payload-plugin-oidc] Simulating token exchange...');
 
-    const tokenRes = await fetch(opts.tokenURL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        code,
-        redirect_uri: opts.callbackURL,
-        client_id: opts.clientID,
-        client_secret: opts.clientSecret,
-      }),
-    });
+          const tokenRes = await fetch(opts.tokenURL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({
+              grant_type: 'authorization_code',
+              code: code,
+              redirect_uri: opts.callbackURL,
+              client_id: opts.clientID,
+              client_secret: opts.clientSecret,
+            }),
+          });
 
-    if (!tokenRes.ok) {
-      const text = await tokenRes.text();
-      console.error('[payload-plugin-oidc] ❌ Token exchange failed:', text);
-      return new Response('OIDC token exchange failed', { status: 500 });
-    }
+          if (!tokenRes.ok) {
+            const text = await tokenRes.text();
+            console.error('[payload-plugin-oidc] ❌ Token exchange failed:', text);
+            return new Response('OIDC token exchange failed', { status: 500 });
+          }
 
-    const tokenData = await tokenRes.json();
-    console.log('[payload-plugin-oidc] ✅ Token response:', tokenData);
+          const tokenData = (await tokenRes.json()) as HydraTokenResponse;
+          console.log('[payload-plugin-oidc] ✅ Token response:', tokenData);
 
-    // TODO: Fetch userinfo here, or pass tokenData to verify()
-    // Example:
-    // const userInfo = await fetchUserInfo(tokenData.access_token);
+          // TODO: Fetch userinfo here, or pass tokenData to verify()
+          // Example:
+          if (opts.userinfo == null) {
+            throw 'You have not configured a mapper for the user.';
+          }
+          let user = await opts.userinfo(tokenData.access_token);
 
-    return new Response('OIDC login complete', { status: 200 });
-  } catch (err) {
-    console.error('[payload-plugin-oidc] ❌ callbackHandler error:', err);
-    return new Response('Callback error', { status: 500 });
-  }
-};
+          // check if the user already exists
+          let slug = (opts.userCollection?.slug as 'users') || 'users';
+          let home = opts.redirectPathAfterLogin || '/admin';
+          return loginHandler(slug, home, user);
+
+          // return new Response('OIDC login complete', { status: 200 });
+        } catch (err) {
+          console.error('[payload-plugin-oidc] ❌ callbackHandler error:', err);
+          return new Response('Callback error', { status: 500 });
+        }
+      };
 
       // --- Register routes (Next/Payload-native, not Express) ---
       console.log('[payload-plugin-oidc] Registering endpoints...');
@@ -128,7 +142,7 @@ return new Response(null, {
         '[payload-plugin-oidc] ✅ Endpoints registered:',
         opts.initPath,
         'and',
-        callbackPath
+        callbackPath,
       );
     }
 
@@ -138,7 +152,7 @@ return new Response(null, {
       admin: {
         ...(incomingConfig.admin || {}),
         // 🩹 TypeScript-safe hack: add vite integration without breaking the type system
-        ...( { vite: extendViteConfig(incomingConfig) } as any ),
+        ...({ vite: extendViteConfig(incomingConfig) } as any),
         components: {
           ...(incomingConfig.admin?.components || {}),
           [opts.components?.position ?? 'beforeLogin']: [
@@ -148,7 +162,7 @@ return new Response(null, {
           ],
         },
       },
-    }; 
+    };
 
     console.log('[payload-plugin-oidc] Plugin setup complete ✅');
     return config;

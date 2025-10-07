@@ -1,11 +1,13 @@
 {
   "name": "payload-plugin-oidc-cms3",
-  "version": "1.53.16",
+  "version": "1.53.18",
   "description": "OIDC plugin for Payload CMS 3.x",
   "license": "MIT",
   "main": "dist/plugin.js",
   "types": "dist/plugin.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "keywords": [
     "oidc",
     "openidconnect",
@@ -27,6 +29,7 @@
     "react": "^18.0.0 || ^19.0.0"
   },
   "dependencies": {
+    "@payloadcms/next": "^3.58.0",
     "@payloadcms/ui": "^3.58.0",
     "express-session": "^1.18.2",
     "jsonwebtoken": "^9.0.2",
