@@ -1,95 +1,134 @@
-import payload from 'payload';
-import type { Config } from 'payload';
+import type { Config, PayloadHandler, PayloadRequest } from 'payload';
 import SignInButton from './components/SignInButton/SignInButton';
 import { loginHandler } from './lib/login';
-import type { oidcPluginOptions } from './types';
 import { verify } from './lib/oauth/verify';
 import { getCallbackPath } from './lib/helpers';
 import { extendViteConfig } from './lib/webpack';
+import type { oidcPluginOptions } from './types';
+import crypto from 'crypto';
 
 export const oidcPlugin =
   (opts: oidcPluginOptions) =>
   (incomingConfig: Config): Config => {
-    console.log('[payload-plugin-oidc] OIDC plugin initialized');
+    console.log('[payload-plugin-oidc] → Initializing OIDC plugin');
 
-    
-    const config: Config = { ...incomingConfig };
-    const buttonPosition = opts.components?.position ?? 'beforeLogin';
-    const existingComponents = config.admin?.components?.[buttonPosition] || [];
+    const callbackPath = getCallbackPath(opts);
+    const userCollectionSlug = opts.userCollection?.slug || 'users';
+    console.log(
+      '[payload-plugin-oidc]',
+      'userCollection:',
+      userCollectionSlug,
+      'initPath:',
+      opts.initPath,
+      'callbackPath:',
+      callbackPath
+    );
 
-    // 👇 cast to any to silence missing `vite` type (runtime works fine)
-    config.admin = {
-      ...(config.admin || {}),
-      ...( { vite: extendViteConfig(incomingConfig) } as any ),
-      components: {
-        ...(config.admin?.components || {}),
-        [buttonPosition]: [
-          ...existingComponents,
-          opts.components?.Button ?? SignInButton,
-        ],
-      },
-    };
+    // --- Server-side setup (Next.js compatible) ---
+    if (typeof window === 'undefined') {
+      console.log('[payload-plugin-oidc] Running server-side setup...');
+      const passport = require('passport');
+      const OAuth2Strategy = require('passport-oauth2');
 
-    // 🧠 Stop here for admin-only build
-    if (typeof window !== 'undefined') return config;
-
-    // 🧠 Server-side logic
-    (async () => {
-      const session = (await import('express-session')).default;
-      const passport = (await import('passport')).default;
-      const OAuth2Strategy = (await import('passport-oauth2')).default;
-      const createMemoryStore = (await import('memorystore')).default;
-
-      const userCollectionSlug = opts.userCollection?.slug || 'users';
-      const callbackPath = getCallbackPath(opts);
-      const MemoryStore = createMemoryStore(session);
-
-      // ⚠️ `root` prop removed in Payload 3; just omit it
-      config.endpoints = [
-        ...(config.endpoints || []),
-        {
-          path: opts.initPath,
-          method: 'get',
-          handler: passport.authenticate('oauth2'),
-        },
-        {
-          path: callbackPath,
-          method: 'get',
-          handler: session({
-            resave: false,
-            saveUninitialized: false,
-            secret: process.env.PAYLOAD_SECRET || 'unsafe',
-            store: new MemoryStore({ checkPeriod: 86400000 }),
-          }),
-        },
-        {
-          path: callbackPath,
-          method: 'get',
-          handler: passport.authenticate('oauth2', { failureRedirect: '/' }),
-        },
-        {
-          path: callbackPath,
-          method: 'get',
-          handler: loginHandler(
-            userCollectionSlug,
-            opts.redirectPathAfterLogin || '/admin',
-          ),
-        },
-      ];
-
+      console.log('[payload-plugin-oidc] Registering OAuth2 strategy...');
+      console.log('[payload-plugin-oidc] passport config -> ', JSON.stringify(opts));
       passport.use(new OAuth2Strategy(opts, verify(opts)));
-      passport.serializeUser((user: any, done: (err: any, id?: any) => void) =>
-        done(null, user.id),
-      );
-      passport.deserializeUser(async (id: string, done: (err: any, user?: any) => void) => {
-        try {
-          const user = await payload.findByID({ collection: userCollectionSlug, id });
-          done(null, user);
-        } catch (err) {
-          done(err);
-        }
-      });
-    })();
 
+      // --- OIDC Sign-in ---
+      const initHandler: PayloadHandler = async (req: PayloadRequest) => {
+        console.log('[payload-plugin-oidc] /oidc/signin route hit');
+
+        try {
+          // const redirectURL = `${opts.authorizationURL}?client_id=${encodeURIComponent(opts.clientID)}&redirect_uri=${encodeURIComponent(opts.callbackURL)}&response_type=code&scope=${encodeURIComponent(opts.scope)}`;
+          
+
+              const state = crypto.randomBytes(16).toString('hex'); // 32-char random hex (strong entropy)
+    const redirectURL = new URL(opts.authorizationURL);
+    redirectURL.searchParams.set('client_id', opts.clientID);
+    redirectURL.searchParams.set('redirect_uri', opts.callbackURL);
+    redirectURL.searchParams.set('response_type', 'code');
+    redirectURL.searchParams.set('scope', opts.scope);
+    redirectURL.searchParams.set('state', state);
+
+    console.log('[payload-plugin-oidc] Redirecting to:', redirectURL);
+
+return new Response(null, {
+      status: 302,
+      headers: {
+        Location: redirectURL.toString(),
+        'Set-Cookie': `oidc_state=${state}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=300`, // 5 min lifetime
+      },
+    });
+    
+        } catch (err) {
+          console.error('[payload-plugin-oidc] ❌ initHandler error:', err);
+          return new Response('OIDC init error', { status: 500 });
+        }
+      };
+
+      // --- OIDC Callback ---
+      const callbackHandler: PayloadHandler = async (req: PayloadRequest) => {
+        console.log('[payload-plugin-oidc] /oidc/callback route hit');
+
+        try {
+          const rawUrl = req.url ?? '';
+          const url = new URL(rawUrl, 'http://localhost'); // fallback base ensures valid URL
+          const code = url.searchParams.get('code');
+          console.log('[payload-plugin-oidc] received code:', code);
+
+          if (!code) {
+            return new Response('Missing code', { status: 400 });
+          }
+
+          console.log('[payload-plugin-oidc] Simulating token exchange...');
+          await loginHandler(userCollectionSlug, opts.redirectPathAfterLogin || '/admin')(
+            req as any,
+            {} as any
+          );
+
+          return new Response(null, {
+            status: 302,
+            headers: { Location: opts.redirectPathAfterLogin || '/admin' },
+          });
+        } catch (err) {
+          console.error('[payload-plugin-oidc] ❌ callbackHandler error:', err);
+          return new Response('OIDC callback error', { status: 500 });
+        }
+      };
+
+      // --- Register routes (Next/Payload-native, not Express) ---
+      console.log('[payload-plugin-oidc] Registering endpoints...');
+      incomingConfig.endpoints = [
+        ...(incomingConfig.endpoints || []),
+        { path: opts.initPath, method: 'get', handler: initHandler },
+        { path: callbackPath, method: 'get', handler: callbackHandler },
+      ];
+      console.log(
+        '[payload-plugin-oidc] ✅ Endpoints registered:',
+        opts.initPath,
+        'and',
+        callbackPath
+      );
+    }
+
+    // --- Admin UI Integration ---
+    const config: Config = {
+      ...incomingConfig,
+      admin: {
+        ...(incomingConfig.admin || {}),
+        // 🩹 TypeScript-safe hack: add vite integration without breaking the type system
+        ...( { vite: extendViteConfig(incomingConfig) } as any ),
+        components: {
+          ...(incomingConfig.admin?.components || {}),
+          [opts.components?.position ?? 'beforeLogin']: [
+            ...(incomingConfig.admin?.components?.[opts.components?.position ?? 'beforeLogin'] ||
+              []),
+            opts.components?.Button ?? SignInButton,
+          ],
+        },
+      },
+    }; 
+
+    console.log('[payload-plugin-oidc] Plugin setup complete ✅');
     return config;
   };

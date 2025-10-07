@@ -2,7 +2,7 @@ import { Button } from '@payloadcms/ui';
 import React from 'react';
 
 export default function SignInButton() {
-  let signInUrl = '/oidc/signin';
+  let signInUrl = '/api/oidc/signin';
 
   try {
     const redirectUrl = new URLSearchParams(window.location.search).get('redirect');
