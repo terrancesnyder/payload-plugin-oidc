@@ -59,7 +59,7 @@ return new Response(null, {
         'Set-Cookie': `oidc_state=${state}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=300`, // 5 min lifetime
       },
     });
-    
+
         } catch (err) {
           console.error('[payload-plugin-oidc] ❌ initHandler error:', err);
           return new Response('OIDC init error', { status: 500 });
@@ -68,33 +68,54 @@ return new Response(null, {
 
       // --- OIDC Callback ---
       const callbackHandler: PayloadHandler = async (req: PayloadRequest) => {
-        console.log('[payload-plugin-oidc] /oidc/callback route hit');
+  console.log('[payload-plugin-oidc] /oidc/callback route hit');
+  try {
+    const rawUrl = req.url ?? '';
+    const url = new URL(rawUrl, 'http://localhost');
+    const code = url.searchParams.get('code');
+    console.log('[payload-plugin-oidc] received code:', code);
 
-        try {
-          const rawUrl = req.url ?? '';
-          const url = new URL(rawUrl, 'http://localhost'); // fallback base ensures valid URL
-          const code = url.searchParams.get('code');
-          console.log('[payload-plugin-oidc] received code:', code);
+    if (!code) {
+      console.error('[payload-plugin-oidc] ❌ Missing code');
+      return new Response('Missing code', { status: 400 });
+    }
 
-          if (!code) {
-            return new Response('Missing code', { status: 400 });
-          }
+    console.log('[payload-plugin-oidc] Simulating token exchange...');
+    console.log('[payload-plugin-oidc] Simulating token exchange...');
 
-          console.log('[payload-plugin-oidc] Simulating token exchange...');
-          await loginHandler(userCollectionSlug, opts.redirectPathAfterLogin || '/admin')(
-            req as any,
-            {} as any
-          );
+    const tokenRes = await fetch(opts.tokenURL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: opts.callbackURL,
+        client_id: opts.clientID,
+        client_secret: opts.clientSecret,
+      }),
+    });
 
-          return new Response(null, {
-            status: 302,
-            headers: { Location: opts.redirectPathAfterLogin || '/admin' },
-          });
-        } catch (err) {
-          console.error('[payload-plugin-oidc] ❌ callbackHandler error:', err);
-          return new Response('OIDC callback error', { status: 500 });
-        }
-      };
+    if (!tokenRes.ok) {
+      const text = await tokenRes.text();
+      console.error('[payload-plugin-oidc] ❌ Token exchange failed:', text);
+      return new Response('OIDC token exchange failed', { status: 500 });
+    }
+
+    const tokenData = await tokenRes.json();
+    console.log('[payload-plugin-oidc] ✅ Token response:', tokenData);
+
+    // TODO: Fetch userinfo here, or pass tokenData to verify()
+    // Example:
+    // const userInfo = await fetchUserInfo(tokenData.access_token);
+
+    return new Response('OIDC login complete', { status: 200 });
+  } catch (err) {
+    console.error('[payload-plugin-oidc] ❌ callbackHandler error:', err);
+    return new Response('Callback error', { status: 500 });
+  }
+};
 
       // --- Register routes (Next/Payload-native, not Express) ---
       console.log('[payload-plugin-oidc] Registering endpoints...');

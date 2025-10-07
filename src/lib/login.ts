@@ -43,7 +43,7 @@ export const loginHandler =
 /**
  * Build the object of fields to include in JWT
  */
-const getFieldsToSign = (
+export const getFieldsToSign = (
   collectionConfig: SanitizedCollectionConfig,
   user: Record<string, any>,
 ) => {
