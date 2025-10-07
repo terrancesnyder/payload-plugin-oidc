@@ -1,11 +1,18 @@
-import type { StrategyOptions } from 'passport-oauth2';
+// import type { StrategyOptions } from 'passport-oauth2';
 import type { ComponentType } from 'react';
 
-export const _strategy = 'oauth2';
+export const _strategy = 'oidc';
 
-export interface oidcPluginOptions extends StrategyOptions {
+export interface oidcPluginOptions {
   /** Register user after successful authentication (when user not found) - Defaults to false */
   createUserIfNotFound: boolean;
+
+  callbackURL: string,
+  clientID: string,
+  clientSecret: string,
+  authorizationURL: string,
+  tokenURL: string,
+  scope: string,
 
   /** Map an authentication result to a user */
   userinfo: (accessToken: string) => Promise<{

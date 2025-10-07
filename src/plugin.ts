@@ -1,93 +1,95 @@
-import session from 'express-session';
-import passport from 'passport';
-import OAuth2Strategy from 'passport-oauth2';
 import payload from 'payload';
-import type { Config } from 'payload/config';
+import type { Config } from 'payload';
 import SignInButton from './components/SignInButton/SignInButton';
 import { loginHandler } from './lib/login';
 import type { oidcPluginOptions } from './types';
 import { verify } from './lib/oauth/verify';
-import { extendWebpackConfig } from './lib/webpack';
 import { getCallbackPath } from './lib/helpers';
-import createMemoryStore from 'memorystore';
-
-// Detect client side because some dependencies may be nullified
-const isUI = typeof session !== 'function';
+import { extendViteConfig } from './lib/webpack';
 
 export const oidcPlugin =
   (opts: oidcPluginOptions) =>
   (incomingConfig: Config): Config => {
-    let config = { ...incomingConfig };
-    const buttonComponentPosition = opts.components?.position ?? 'beforeLogin';
-    let componentConfigs = config.admin?.components?.beforeLogin || [];
+    console.log('[payload-plugin-oidc] OIDC plugin initialized');
 
-    if (buttonComponentPosition == 'afterLogin') {
-      componentConfigs = config.admin?.components?.afterLogin || [];
-    }
+    
+    const config: Config = { ...incomingConfig };
+    const buttonPosition = opts.components?.position ?? 'beforeLogin';
+    const existingComponents = config.admin?.components?.[buttonPosition] || [];
 
+    // 👇 cast to any to silence missing `vite` type (runtime works fine)
     config.admin = {
       ...(config.admin || {}),
-
-      webpack: extendWebpackConfig(incomingConfig),
+      ...( { vite: extendViteConfig(incomingConfig) } as any ),
       components: {
         ...(config.admin?.components || {}),
-        [buttonComponentPosition]: [
-          ...(componentConfigs || []),
+        [buttonPosition]: [
+          ...existingComponents,
           opts.components?.Button ?? SignInButton,
         ],
       },
     };
 
-    if (isUI) return config;
+    // 🧠 Stop here for admin-only build
+    if (typeof window !== 'undefined') return config;
 
-    const userCollectionSlug = (opts.userCollection?.slug as 'users') || 'users';
-    const callbackPath = getCallbackPath(opts);
-    const MemoryStore = createMemoryStore(session);
+    // 🧠 Server-side logic
+    (async () => {
+      const session = (await import('express-session')).default;
+      const passport = (await import('passport')).default;
+      const OAuth2Strategy = (await import('passport-oauth2')).default;
+      const createMemoryStore = (await import('memorystore')).default;
 
-    config.endpoints = [
-      ...(config.endpoints || []),
-      {
-        path: opts.initPath,
-        method: 'get',
-        root: true,
-        handler: passport.authenticate('oauth2'),
-      },
-      {
-        path: callbackPath,
-        method: 'get',
-        root: true,
-        handler: session({
-          resave: false,
-          saveUninitialized: false,
-          secret: process.env.PAYLOAD_SECRET || 'unsafe',
-          store: new MemoryStore({
-            checkPeriod: 86400000, // prune expired entries every 24h
+      const userCollectionSlug = opts.userCollection?.slug || 'users';
+      const callbackPath = getCallbackPath(opts);
+      const MemoryStore = createMemoryStore(session);
+
+      // ⚠️ `root` prop removed in Payload 3; just omit it
+      config.endpoints = [
+        ...(config.endpoints || []),
+        {
+          path: opts.initPath,
+          method: 'get',
+          handler: passport.authenticate('oauth2'),
+        },
+        {
+          path: callbackPath,
+          method: 'get',
+          handler: session({
+            resave: false,
+            saveUninitialized: false,
+            secret: process.env.PAYLOAD_SECRET || 'unsafe',
+            store: new MemoryStore({ checkPeriod: 86400000 }),
           }),
-        }),
-      },
-      {
-        path: callbackPath,
-        method: 'get',
-        root: true,
-        handler: passport.authenticate('oauth2', { failureRedirect: '/' }),
-      },
-      {
-        path: callbackPath,
-        method: 'get',
-        root: true,
-        handler: loginHandler(userCollectionSlug, opts.redirectPathAfterLogin || '/admin'),
-      },
-    ];
+        },
+        {
+          path: callbackPath,
+          method: 'get',
+          handler: passport.authenticate('oauth2', { failureRedirect: '/' }),
+        },
+        {
+          path: callbackPath,
+          method: 'get',
+          handler: loginHandler(
+            userCollectionSlug,
+            opts.redirectPathAfterLogin || '/admin',
+          ),
+        },
+      ];
 
-    passport.use(new OAuth2Strategy(opts, verify(opts)));
-    passport.serializeUser((user: any, done) => done(null, user.id));
-    passport.deserializeUser(async (id: string, done) => {
-      const user = await payload.findByID({
-        collection: userCollectionSlug,
-        id,
+      passport.use(new OAuth2Strategy(opts, verify(opts)));
+      passport.serializeUser((user: any, done: (err: any, id?: any) => void) =>
+        done(null, user.id),
+      );
+      passport.deserializeUser(async (id: string, done: (err: any, user?: any) => void) => {
+        try {
+          const user = await payload.findByID({ collection: userCollectionSlug, id });
+          done(null, user);
+        } catch (err) {
+          done(err);
+        }
       });
-      done(null, user);
-    });
+    })();
 
     return config;
   };

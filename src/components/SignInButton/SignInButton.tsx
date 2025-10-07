@@ -1,4 +1,4 @@
-import Button from 'payload/dist/admin/components/elements/Button';
+import { Button } from '@payloadcms/ui';
 import React from 'react';
 
 export default function SignInButton() {

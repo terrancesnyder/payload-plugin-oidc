@@ -1,67 +1,72 @@
 import { Response } from 'express';
 import jwt from 'jsonwebtoken';
 import payload from 'payload';
-import { Field, fieldAffectsData, fieldHasSubFields } from 'payload/dist/fields/config/types';
-import getCookieExpiration from 'payload/dist/utilities/getCookieExpiration';
-import { PayloadRequest, SanitizedCollectionConfig } from 'payload/types';
+import type { Config, Field, PayloadRequest, SanitizedCollectionConfig } from 'payload';
+import { fieldAffectsData, fieldHasSubFields } from './helpers';
 
+/**
+ * Returns a Date object representing when a cookie should expire
+ */
+function getCookieExpiration(seconds: number): Date {
+  const exp = new Date();
+  exp.setTime(exp.getTime() + seconds * 1000);
+  return exp;
+}
+
+/**
+ * Express-style handler for OIDC login redirect
+ */
 export const loginHandler =
   (userCollectionSlug: string, redirectPathAfterLogin: string) =>
   async (req: PayloadRequest, res: Response) => {
-    // Get the Mongoose user
     const collectionConfig = payload.collections[userCollectionSlug].config;
+    const user = JSON.parse(JSON.stringify(req.user));
 
-    // Sanitize the user object
-    // let user = userDoc.toJSON({ virtuals: true })
-    let user = JSON.parse(JSON.stringify(req.user));
-
-    // Decide which user fields to include in the JWT
     const fieldsToSign = getFieldsToSign(collectionConfig, user);
 
-    // Sign the JWT
     const token = jwt.sign(fieldsToSign, payload.secret, {
       expiresIn: collectionConfig.auth.tokenExpiration,
     });
 
-    // Set cookie
     res.cookie(`${payload.config.cookiePrefix}-token`, token, {
       path: '/',
       httpOnly: true,
       expires: getCookieExpiration(collectionConfig.auth.tokenExpiration),
       secure: collectionConfig.auth.cookies.secure,
-      sameSite: collectionConfig.auth.cookies.sameSite,
+      // sameSite: collectionConfig.auth.cookies.sameSite,
       domain: collectionConfig.auth.cookies.domain || undefined,
     });
 
-    // Redirect to admin dashboard
     return res.redirect(redirectPathAfterLogin);
   };
 
-const getFieldsToSign = (collectionConfig: SanitizedCollectionConfig, user: any) => {
-  return collectionConfig.fields.reduce(
-    (signedFields, field: Field) => {
-      const result = {
-        ...signedFields,
-      };
+/**
+ * Build the object of fields to include in JWT
+ */
+const getFieldsToSign = (
+  collectionConfig: SanitizedCollectionConfig,
+  user: Record<string, any>,
+) => {
+  return collectionConfig.fields.reduce((signed: Record<string, any>, field: Field) => {
+    const result = { ...signed };
 
-      if (!fieldAffectsData(field) && fieldHasSubFields(field)) {
-        field.fields.forEach((subField) => {
-          if (fieldAffectsData(subField) && subField.saveToJWT) {
-            result[subField.name] = user[subField.name];
-          }
-        });
-      }
+    // safely check for subfields
+    if (Array.isArray((field as any).fields)) {
+      (field as any).fields.forEach((sub: any) => {
+        if (sub && 'saveToJWT' in sub && sub.saveToJWT) {
+          result[sub.name] = user[sub.name];
+        }
+      });
+    }
 
-      if (fieldAffectsData(field) && field.saveToJWT) {
-        result[field.name] = user[field.name];
-      }
+    if ('saveToJWT' in field && field.saveToJWT) {
+      result[(field as any).name] = user[(field as any).name];
+    }
 
-      return result;
-    },
-    {
-      email: user.email,
-      id: user.id,
-      collection: collectionConfig.slug,
-    } as any,
-  );
+    return result;
+  }, {
+    email: user.email,
+    id: user.id,
+    collection: collectionConfig.slug,
+  });
 };

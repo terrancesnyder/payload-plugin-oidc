@@ -1,21 +1,28 @@
-import type { Config } from 'payload/config';
-import type { Configuration as WebpackConfig } from 'webpack';
+import type { Config } from 'payload';
+import type { InlineConfig as ViteConfig } from 'vite';
 
-export const extendWebpackConfig =
-  (config: Config): ((webpackConfig: WebpackConfig) => WebpackConfig) =>
-  (webpackConfig: any) => {
-    const existingWebpackConfig =
-      typeof config.admin?.webpack === 'function'
-        ? config.admin.webpack(webpackConfig)
-        : webpackConfig;
+/**
+ * Extend Payload's Vite configuration.
+ * Mirrors the old extendWebpackConfig behaviour for v3.
+ */
+export const extendViteConfig =
+  (config: Config): ((viteConfig: ViteConfig) => ViteConfig) =>
+  (viteConfig) => {
+    // 👇 Cast admin to any because Payload's public types don’t yet expose `vite`
+    const adminConfig = config.admin as any;
 
-    const newWebpack = {
-      ...existingWebpackConfig,
+    const existingViteConfig =
+      typeof adminConfig?.vite === 'function'
+        ? adminConfig.vite(viteConfig)
+        : viteConfig;
+
+    return {
+      ...existingViteConfig,
       resolve: {
-        ...(existingWebpackConfig.resolve || {}),
+        ...(existingViteConfig.resolve || {}),
         alias: {
-          ...(existingWebpackConfig.resolve?.alias ? existingWebpackConfig.resolve.alias : {}),
-
+          ...(existingViteConfig.resolve?.alias || {}),
+          // disable / stub out Node-only modules for the browser admin bundle
           'express-session': false,
           'passport-oauth2': false,
           memorystore: false,
@@ -24,6 +31,4 @@ export const extendWebpackConfig =
         },
       },
     };
-
-    return newWebpack;
   };
