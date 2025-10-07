@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import jwt from 'jsonwebtoken';
 import payload, { generateCookie, generatePayloadCookie } from 'payload';
-import type { Config, Field, PayloadRequest, SanitizedCollectionConfig } from 'payload';
+import type { PayloadHandler, PayloadRequest, SanitizedCollectionConfig, Field } from 'payload';
 import { fieldAffectsData, fieldHasSubFields } from './helpers';
 import { setPayloadAuthCookie } from './setPayloadAuthCookie';
 
@@ -21,13 +21,18 @@ export const getCookieExpiration = ({ seconds = 7200 }: GetCookieExpirationArgs)
 /**
  * Express-style handler for OIDC login redirect
  */
-export const loginHandler =
-  (userCollectionSlug: string, redirectPathAfterLogin: string, user: any) =>
-  async (req: PayloadRequest, res: Response) => {
+export const loginHandler = (
+  userCollectionSlug: string,
+  redirectPathAfterLogin: string,
+  oidcUser: any, // renamed for clarity
+): PayloadHandler => {
+  // ✅ Return a fetch-compatible handler
+  return async (req: PayloadRequest): Promise<globalThis.Response> => {
     // find the user configuration
-    const collectionConfig = payload.collections[userCollectionSlug].config;
-    const oidcUser = JSON.parse(JSON.stringify(req.user));
+    const collectionConfig = req.payload.collections[userCollectionSlug].config;
     console.log('[payload-oidc-plugin] user', oidcUser);
+
+    console.log('[payload-oidc-plugin] does payload exits? ' + (req.payload ? 'true' : 'false'));
 
     if (!oidcUser.email) {
       console.error('[payload-oidc-plugin] user object does not have email attribute');
@@ -63,7 +68,7 @@ export const loginHandler =
     // sign the token to keep compliant with payload cms
     const fieldsToSign = getFieldsToSign(collectionConfig, oidcUser);
     console.log('[payload-oidc-plugin] fieldsToSign', fieldsToSign);
-    const token = jwt.sign(fieldsToSign, payload.secret, {
+    const token = jwt.sign(fieldsToSign, req.payload.secret, {
       expiresIn: collectionConfig.auth.tokenExpiration,
     });
     console.log('[payload-oidc-plugin] token', token);
@@ -95,7 +100,7 @@ export const loginHandler =
     });
 
     // --- 4. Apply Set-Cookie header manually (like Payload core does) ---
-    res.setHeader('Set-Cookie', cookieHeader);
+    // res.setHeader('Set-Cookie', cookieHeader);
     console.log('[payload-oidc-plugin] set cookie', cookieHeader);
 
     // let cookie = generateCookie({
@@ -131,6 +136,7 @@ export const loginHandler =
       headers,
     });
   };
+};
 
 /**
  * Build the object of fields to include in JWT

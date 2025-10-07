@@ -1,4 +1,4 @@
-import type { Config, PayloadHandler, PayloadRequest } from 'payload';
+import type { Config, Payload, PayloadHandler, PayloadRequest } from 'payload';
 import SignInButton from './components/SignInButton/SignInButton';
 import { loginHandler } from './lib/login';
 import { verify } from './lib/oauth/verify';
@@ -12,6 +12,8 @@ export const oidcPlugin =
   (opts: oidcPluginOptions) =>
   (incomingConfig: Config): Config => {
     console.log('[payload-plugin-oidc] → Initializing OIDC plugin');
+
+    let payload_instance: Payload | null = null;
 
     const callbackPath = getCallbackPath(opts);
     const userCollectionSlug = opts.userCollection?.slug || 'users';
@@ -76,6 +78,19 @@ export const oidcPlugin =
       const callbackHandler: PayloadHandler = async (req: PayloadRequest) => {
         console.log('[payload-plugin-oidc] /oidc/callback route hit');
         try {
+          if (payload_instance == null) {
+            console.error('[payload-plugin-oidc] ❌ global payload is undefined');
+            if (req.payload == null) {
+              console.error('[payload-plugin-oidc] ❌ req.payload is undefined');
+              return new Response('Payload not available', { status: 500 });
+            } else {
+              console.error('[payload-plugin-oidc] ☑️ payload IS in the req object!');
+            }
+          } else {
+            req.payload = payload_instance;
+            console.error('[payload-plugin-oidc] ☑️ WE GOT PAYLOAD!');
+          }
+
           const rawUrl = req.url ?? '';
           const url = new URL(rawUrl, 'http://localhost');
           const code = url.searchParams.get('code');
@@ -85,9 +100,6 @@ export const oidcPlugin =
             console.error('[payload-plugin-oidc] ❌ Missing code');
             return new Response('Missing code', { status: 400 });
           }
-
-          console.log('[payload-plugin-oidc] Simulating token exchange...');
-          console.log('[payload-plugin-oidc] Simulating token exchange...');
 
           const tokenRes = await fetch(opts.tokenURL, {
             method: 'POST',
@@ -122,7 +134,9 @@ export const oidcPlugin =
           // check if the user already exists
           let slug = (opts.userCollection?.slug as 'users') || 'users';
           let home = opts.redirectPathAfterLogin || '/admin';
-          return loginHandler(slug, home, user);
+
+          // Ensure Payload is initialized before using it (important for Next.js)
+          return loginHandler(slug, home, user)(req);
 
           // return new Response('OIDC login complete', { status: 200 });
         } catch (err) {
@@ -162,6 +176,13 @@ export const oidcPlugin =
           ],
         },
       },
+    };
+
+    config.onInit = async (payload) => {
+      if (payload) {        
+        payload.logger.info(' ☑️ ☑️ Plugin Has Payload!');
+        payload_instance = payload;
+      }
     };
 
     console.log('[payload-plugin-oidc] Plugin setup complete ✅');
