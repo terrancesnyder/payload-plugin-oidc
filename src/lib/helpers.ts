@@ -1,4 +1,4 @@
-import { oidcPluginOptions } from "../types";
+import { oidcPluginOptions } from "../types.js";
 
 export const getCallbackPath = (opts: oidcPluginOptions) => {
   return (

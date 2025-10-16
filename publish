@@ -1,0 +1,4 @@
+ npm run build
+ npm publish --access public
+ 
+ npm install payload-plugin-oidc-cms3@1.53.40

@@ -1,18 +1,22 @@
 import { VerifyCallback } from 'passport-oauth2';
-import payload from 'payload';
-import { oidcPluginOptions, UserInfo, _strategy } from '../../types';
+import payload, { Payload } from 'payload';
+import { oidcPluginOptions, UserInfo, _strategy, ResolvePayloadCallback } from '../../types.js';
 
 const ERROR_USERINFO = new Error('FAILED TO GET USERINFO');
 const ERROR_USER_DOES_NOT_EXIST = new Error('USER DOES NOT EXIST');
 
-export const verify = (opts: oidcPluginOptions) =>
+export const verify = (opts: oidcPluginOptions, resolvePayload: ResolvePayloadCallback) =>
   async function (accessToken: string, refreshToken: string, profile: {}, cb: VerifyCallback) {
     const collection = opts.userCollection?.slug ?? ('users' as any);
     const searchKey = opts.userCollection?.searchKey ?? ('sub' as any);
     const createUserIfNotFound = opts.createUserIfNotFound || false;
 
     try {
-      const info = await opts.userinfo?.(accessToken);
+      let payload = resolvePayload();
+      if (payload == null) {
+        throw 'Tried to resolve payload but could not be found!'
+      }
+      const info = await opts.userinfo?.(accessToken, payload);
       if (!info) cb(ERROR_USERINFO);
 
       const user = await findUser(collection, searchKey, info);

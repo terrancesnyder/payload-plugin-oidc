@@ -1,9 +1,10 @@
 {
   "name": "payload-plugin-oidc-cms3",
-  "version": "1.53.26",
+  "version": "1.53.43",
   "description": "OIDC plugin for Payload CMS 3.x",
   "license": "MIT",
   "main": "dist/plugin.js",
+  "type": "module",
   "types": "dist/plugin.d.ts",
   "files": [
     "dist"
@@ -29,8 +30,8 @@
     "react": "^18.0.0 || ^19.0.0"
   },
   "dependencies": {
-    "@payloadcms/next": "^3.58.0",
-    "@payloadcms/ui": "^3.58.0",
+    "@payloadcms/next": "3.59.1",
+    "@payloadcms/ui": "3.59.1",
     "express-session": "^1.18.2",
     "jsonwebtoken": "^9.0.2",
     "memorystore": "^1.6.7",
@@ -47,7 +48,7 @@
     "@types/react": "^18.3.26",
     "@types/react-dom": "^18.3.7",
     "dotenv": "^16.4.7",
-    "payload": "^3.58.0",
+    "payload": "3.59.1",
     "prettier": "^3.4.2",
     "typescript": "^5.7.3",
     "vite": "^5.4.10"
@@ -55,7 +56,6 @@
   "exports": {
     ".": {
       "import": "./dist/plugin.js",
-      "require": "./dist/plugin.js",
       "types": "./dist/plugin.d.ts"
     }
   },

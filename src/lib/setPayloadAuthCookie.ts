@@ -28,10 +28,7 @@ export async function setPayloadAuthCookie({
     token,
   })
 
-  console.log('[payload-oidc-plugin] cookie', payloadCookie);
-
   if (payloadCookie.value) {
-    console.log('[payload-oidc-plugin] set cookie', payloadCookie);
     cookies.set(payloadCookie.name, payloadCookie.value, {
       domain: authConfig.cookies.domain,
       expires: payloadCookie.expires ? new Date(payloadCookie.expires) : undefined,

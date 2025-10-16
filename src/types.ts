@@ -1,11 +1,15 @@
 // import type { StrategyOptions } from 'passport-oauth2';
+import { Payload } from 'payload';
 import type { ComponentType } from 'react';
 
 export const _strategy = 'oidc';
 
+export type ResolvePayloadCallback = () => Payload;
+
 export interface oidcPluginOptions {
   /** Register user after successful authentication (when user not found) - Defaults to false */
   createUserIfNotFound: boolean;
+  debug?: boolean | 'info' | 'verbose' | 'error';
 
   callbackURL: string,
   clientID: string,
@@ -15,7 +19,7 @@ export interface oidcPluginOptions {
   scope: string,
 
   /** Map an authentication result to a user */
-  userinfo: (accessToken: string) => Promise<{
+  userinfo: (accessToken: string, payload: Payload) => Promise<{
     /** Unique identifier for the linked account */
     sub: string;
     /** Unique identifier for the linked account */

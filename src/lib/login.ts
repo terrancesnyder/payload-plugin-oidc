@@ -2,8 +2,6 @@ import { Response } from 'express';
 import jwt from 'jsonwebtoken';
 import payload, { generateCookie, generatePayloadCookie } from 'payload';
 import type { PayloadHandler, PayloadRequest, SanitizedCollectionConfig, Field } from 'payload';
-import { fieldAffectsData, fieldHasSubFields } from './helpers';
-import { setPayloadAuthCookie } from './setPayloadAuthCookie';
 
 type GetCookieExpirationArgs = {
   /*
@@ -25,22 +23,18 @@ export const loginHandler = (
   userCollectionSlug: string,
   redirectPathAfterLogin: string,
   oidcUser: any, // renamed for clarity
+  debug: boolean,
 ): PayloadHandler => {
   // ✅ Return a fetch-compatible handler
   return async (req: PayloadRequest): Promise<globalThis.Response> => {
     // find the user configuration
     const collectionConfig = req.payload.collections[userCollectionSlug].config;
-    console.log('[payload-oidc-plugin] user', oidcUser);
-
-    console.log('[payload-oidc-plugin] does payload exits? ' + (req.payload ? 'true' : 'false'));
 
     if (!oidcUser.email) {
-      console.error('[payload-oidc-plugin] user object does not have email attribute');
-      throw '[payload-oidc-plugin] user object does not have email attribute';
+      console.error('[🔒oidc-plugin] user object does not have email attribute');
+      throw '[🔒oidc-plugin] user object does not have email attribute';
     }
 
-    // create the user if they dont exist
-    console.log('[payload-oidc-plugin] try to find user with email', oidcUser.email);
     // --- 1. Find or create user ---
     const existing = await req.payload.find({
       collection: userCollectionSlug,
@@ -49,89 +43,57 @@ export const loginHandler = (
       },
     });
 
+    // check if user already exists, if not lets automatically create them
+    // and we apparently MUST set a password which later we'll let the user
+    // change, but for now its fine.
     let user = existing?.docs?.[0];
     if (!user) {
-      console.log('[payload-oidc-plugin] creating a new user', oidcUser.email);
       user = await req.payload.create({
         collection: userCollectionSlug,
         data: {
           email: oidcUser.email,
-          displayName: oidcUser.displayName,
-          givenName: oidcUser.givenName,
-          familyName: oidcUser.familyName,
-          oidcSub: oidcUser.sub,
-          oidcIss: oidcUser.iss,
+          name: oidcUser.display_name,
+          display_name: oidcUser.display_name,
+          given_name: oidcUser.given_name,
+          family_name: oidcUser.family_name,
+          picture: oidcUser.picture,
+          sub: oidcUser.sub,
+          iss: oidcUser.iss,
+          password: 'my_password_1234',
         },
       });
     }
 
-    // sign the token to keep compliant with payload cms
-    const fieldsToSign = getFieldsToSign(collectionConfig, oidcUser);
-    console.log('[payload-oidc-plugin] fieldsToSign', fieldsToSign);
-    const token = jwt.sign(fieldsToSign, req.payload.secret, {
-      expiresIn: collectionConfig.auth.tokenExpiration,
-    });
-    console.log('[payload-oidc-plugin] token', token);
+    const headers = new Headers();
 
-    // // apply the cookie
-    // res.cookie(`${payload.config.cookiePrefix}-token`, token, {
-    //   path: '/',
-    //   httpOnly: true,
-    //   expires: getCookieExpiration({ seconds: collectionConfig.auth.tokenExpiration }),
-    //   secure: collectionConfig.auth.cookies.secure,
-    //   // sameSite: collectionConfig.auth.cookies.sameSite,
-    //   domain: collectionConfig.auth.cookies.domain || undefined,
-    // });
-
-    // res.cookie(`${payload.config.cookiePrefix}-token`, token, {
-    //   path: '/',
-    //   httpOnly: true,
-    //   expires: getCookieExpiration({ seconds: collectionConfig.auth.tokenExpiration }),
-    //   secure: collectionConfig.auth.cookies.secure,
-    //   // sameSite: collectionConfig.auth.cookies.sameSite,
-    //   domain: collectionConfig.auth.cookies.domain || undefined,
-    // });
-
-    // --- 3. Generate Payload-compatible cookie header ---
-    const cookieHeader = generatePayloadCookie({
-      collectionAuthConfig: collectionConfig.auth,
-      cookiePrefix: req.payload.config.cookiePrefix,
-      token,
+    // must call login to generate a session and get back our token
+    const loginResult = await req.payload.login({
+      collection: userCollectionSlug,
+      data: {
+        email: user.email,
+        password: 'my_password_1234',
+      },
+      req,
     });
 
-    // --- 4. Apply Set-Cookie header manually (like Payload core does) ---
-    // res.setHeader('Set-Cookie', cookieHeader);
-    console.log('[payload-oidc-plugin] set cookie', cookieHeader);
-
-    // let cookie = generateCookie({
-    //   name: `${req.payload.config.cookiePrefix}-token`,
-    //   domain: undefined, // collectionAuthConfig.cookies.domain ?? undefined,
-    //   expires: getCookieExpiration({ seconds: collectionConfig.auth.tokenExpiration }),
-    //   httpOnly: true,
-    //   path: '/',
-    //   returnCookieAsObject: true, // returnCookieAsObject
-    //   sameSite,
-    //   secure: false, //collectionAuthConfig.cookies.secure,
-    //   value: token,
-    // });
-
-    console.log('[payload-oidc-plugin] ✅ all is good we are redirecting.');
-
-    //
-    // return res.redirect(redirectPathAfterLogin);
-    // new Response('OIDC login complete', { status: 200 });
+    if (loginResult.token != null) {
+      const cookieHeaderLogin = generatePayloadCookie({
+        collectionAuthConfig: collectionConfig.auth,
+        cookiePrefix: req.payload.config.cookiePrefix,
+        token: loginResult.token,
+      });
+      headers.append('Set-Cookie', cookieHeaderLogin);
+    } else {
+      throw 'User could not be logged in.'
+    }
 
     // --- 5. Return a Response with the Set-Cookie header and optional redirect ---
-    const headers = new Headers({
-      'Set-Cookie': cookieHeader, // generated above by generatePayloadCookie()
-      'Content-Type': 'text/plain',
-    });
-
-    // If you want to redirect:
+    // headers.append('Set-Cookie', cookieHeaderManual);
     headers.set('Location', redirectPathAfterLogin);
+    headers.set('Content-Type', 'text/plain');
 
     // If redirect is intended, use 302; otherwise return 200 OK
-    return new Response('OIDC login complete', {
+    return new Response('AOK', {
       status: redirectPathAfterLogin ? 302 : 200,
       headers,
     });
